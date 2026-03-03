@@ -28,6 +28,7 @@ async function main() {
       safeAddress: process.env.PROXY_ADDRESS || '', 
       traderPrivateKey: privateKey,
       chainId: parseInt(process.env.CHAIN_ID || '137'),
+      rpcUrl: process.env.RPC_URL || 'https://polygon.drpc.org',
       collateralToken: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174', // USDC
       conditionalTokensAddress: '0x4d97dcd97ec945f40cf65f87097ace5ea0476045', // Standard on Polygon
       builderConfig: {

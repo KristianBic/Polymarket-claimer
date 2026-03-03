@@ -255,7 +255,7 @@ export async function redeemPolymarketPositions(
     collateralToken,
     conditionalTokensAddress,
     relayerUrl = "https://relayer-v2.polymarket.com",
-    rpcUrl = "https://polygon-rpc.com",
+    rpcUrl = "https://polygon.drpc.org",
     dataApiUrl = "https://data-api.polymarket.com",
     builderConfig,
     delayBetweenTransactions = 2000,
