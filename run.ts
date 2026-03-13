@@ -21,7 +21,7 @@ async function main() {
 
   console.log('🚀 Starting Polymarket Position Redeemer in Continuous Mode...');
   console.log(`ℹ️  Wallet Type: ${walletType}`);
-  console.log(`ℹ️  Check Interval: 15 minutes`);
+  console.log(`ℹ️  Check Interval: 5 minutes`);
 
   const runCycle = async () => {
     console.log(`\n\n-------------------------------------------------------------`);
@@ -65,13 +65,13 @@ async function main() {
   await runCycle();
 
   // Set up the 15-minute interval loop
-  const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
-  console.log(`\n⏳ Next check scheduled in 15 minutes... (Keep this window open)`);
+  const FIVE_MINUTES_MS = 5 * 60 * 1000;
+  console.log(`\n⏳ Next check scheduled in 5 minutes... (Keep this window open)`);
   
   setInterval(async () => {
     await runCycle();
-    console.log(`\n⏳ Next check scheduled in 15 minutes... (Keep this window open)`);
-  }, FIFTEEN_MINUTES_MS);
+    console.log(`\n⏳ Next check scheduled in 5 minutes... (Keep this window open)`);
+  }, FIVE_MINUTES_MS);
 }
 
 main();
