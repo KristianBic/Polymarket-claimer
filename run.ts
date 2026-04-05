@@ -1,77 +1,177 @@
 import * as dotenv from 'dotenv';
+import * as fs from 'fs';
+import * as path from 'path';
 import { redeemPolymarketPositions } from './Redeem-positions-through-relayer-client-and-builders-account';
 import { RelayerTxType } from "@polymarket/builder-relayer-client";
 
-// Load environment variables
+// Load shared config from .env (CHAIN_ID, RPC_URL, etc.)
 dotenv.config();
 
-async function main() {
-  // Validate env vars
-  const privateKey = process.env.PRIVATE_KEY;
-  const apiKey = process.env.API_KEY;
-  const secret = process.env.API_SECRET;
-  const passphrase = process.env.API_PASSPHRASE;
-  const walletType = process.env.WALLET_TYPE === 'PROXY' ? RelayerTxType.PROXY : RelayerTxType.SAFE;
+// ── Account configuration ────────────────────────────────────────────
 
-  if (!privateKey || !apiKey || !secret || !passphrase) {
-    console.error('❌ Error: Missing environment variables in .env file.');
-    console.error('Please ensure PRIVATE_KEY, API_KEY, API_SECRET, and API_PASSPHRASE are set.');
+interface AccountConfig {
+  name: string;
+  fileName: string;
+  privateKey: string;
+  proxyAddress: string;
+  walletType: RelayerTxType;
+  chainId: number;
+  rpcUrl: string;
+  authMethod: 'builder' | 'relayer';
+  // Builder auth
+  apiKey?: string;
+  apiSecret?: string;
+  apiPassphrase?: string;
+  // Relayer auth
+  relayerApiKey?: string;
+  relayerApiKeyAddress?: string;
+}
+
+// ── Account discovery ────────────────────────────────────────────────
+
+function discoverAccounts(): AccountConfig[] {
+  const cwd = process.cwd();
+  const files = fs.readdirSync(cwd)
+    .filter(f => f.startsWith('.env.account') && f !== '.env.account.example')
+    .sort();
+
+  if (files.length === 0) {
+    console.error('❌ No account files found.');
+    console.error('   Create .env.account1, .env.account2, etc. based on .env.account.example');
     process.exit(1);
   }
 
-  console.log('🚀 Starting Polymarket Position Redeemer in Continuous Mode...');
-  console.log(`ℹ️  Wallet Type: ${walletType}`);
-  console.log(`ℹ️  Check Interval: 25 minutes`);
+  const accounts: AccountConfig[] = [];
+
+  for (const file of files) {
+    const filePath = path.join(cwd, file);
+    const parsed = dotenv.parse(fs.readFileSync(filePath));
+
+    const name = parsed.ACCOUNT_NAME || file.replace('.env.', '');
+    const privateKey = parsed.PRIVATE_KEY;
+    const proxyAddress = parsed.PROXY_ADDRESS || '';
+    const walletType = parsed.WALLET_TYPE === 'PROXY' ? RelayerTxType.PROXY : RelayerTxType.SAFE;
+    const authMethod = (parsed.AUTH_METHOD || 'builder').toLowerCase() as 'builder' | 'relayer';
+
+    // Per-account overrides, fallback to shared .env, fallback to defaults
+    const chainId = parseInt(parsed.CHAIN_ID || process.env.CHAIN_ID || '137');
+    const rpcUrl = parsed.RPC_URL || process.env.RPC_URL || 'https://polygon.drpc.org';
+
+    if (!privateKey) {
+      console.warn(`⚠️  Skipping ${file}: Missing PRIVATE_KEY`);
+      continue;
+    }
+
+    if (authMethod === 'builder') {
+      if (!parsed.API_KEY || !parsed.API_SECRET || !parsed.API_PASSPHRASE) {
+        console.warn(`⚠️  Skipping ${file}: AUTH_METHOD=builder requires API_KEY, API_SECRET, API_PASSPHRASE`);
+        continue;
+      }
+      accounts.push({
+        name, fileName: file, privateKey, proxyAddress, walletType, chainId, rpcUrl,
+        authMethod,
+        apiKey: parsed.API_KEY,
+        apiSecret: parsed.API_SECRET,
+        apiPassphrase: parsed.API_PASSPHRASE,
+      });
+    } else if (authMethod === 'relayer') {
+      if (!parsed.RELAYER_API_KEY || !parsed.RELAYER_API_KEY_ADDRESS) {
+        console.warn(`⚠️  Skipping ${file}: AUTH_METHOD=relayer requires RELAYER_API_KEY, RELAYER_API_KEY_ADDRESS`);
+        continue;
+      }
+      accounts.push({
+        name, fileName: file, privateKey, proxyAddress, walletType, chainId, rpcUrl,
+        authMethod,
+        relayerApiKey: parsed.RELAYER_API_KEY,
+        relayerApiKeyAddress: parsed.RELAYER_API_KEY_ADDRESS,
+      });
+    } else {
+      console.warn(`⚠️  Skipping ${file}: Unknown AUTH_METHOD="${authMethod}". Use "builder" or "relayer".`);
+    }
+  }
+
+  return accounts;
+}
+
+// ── Per-account processing ───────────────────────────────────────────
+
+async function processAccount(account: AccountConfig): Promise<void> {
+  const prefix = `[${account.name}]`;
+  console.log(`\n${prefix} 🔑 Auth: ${account.authMethod} | Wallet: ${account.walletType}`);
+
+  // Build the authConfig based on the authentication method
+  const authConfig = account.authMethod === 'relayer'
+    ? {
+        relayerApiKey: account.relayerApiKey!,
+        relayerApiKeyAddress: account.relayerApiKeyAddress!,
+      }
+    : {
+        apiKey: account.apiKey!,
+        secret: account.apiSecret!,
+        passphrase: account.apiPassphrase!,
+      };
+
+  const result = await redeemPolymarketPositions({
+    safeAddress: account.proxyAddress,
+    traderPrivateKey: account.privateKey,
+    chainId: account.chainId,
+    rpcUrl: account.rpcUrl,
+    collateralToken: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174', // USDC
+    conditionalTokensAddress: '0x4d97dcd97ec945f40cf65f87097ace5ea0476045',
+    authConfig,
+    relayerTxType: account.walletType,
+    onProgress: (msg, data) => console.log(`${prefix} [LOG] ${msg}`, data ? JSON.stringify(data) : ''),
+  });
+
+  console.log(`${prefix} ✅ Done | Redeemed: ${result.redeemed} | Failed: ${result.failed} | Total: ${result.totalPositions}`);
+
+  if (result.errors && result.errors.length > 0) {
+    console.log(`${prefix} ⚠️  Errors:`);
+    result.errors.forEach(e => console.error(`${prefix}   - ${e}`));
+  }
+}
+
+// ── Main ─────────────────────────────────────────────────────────────
+
+async function main() {
+  console.log('🚀 Polymarket Multi-Account Position Redeemer');
+  console.log('━'.repeat(60));
+
+  const accounts = discoverAccounts();
+
+  console.log(`📋 Found ${accounts.length} account(s):`);
+  accounts.forEach((a, i) =>
+    console.log(`   ${i + 1}. ${a.name} (${a.authMethod} auth, ${a.walletType} wallet)`)
+  );
 
   const runCycle = async () => {
-    console.log(`\n\n-------------------------------------------------------------`);
-    console.log(`🕒 [${new Date().toLocaleString()}] Checking for positions to redeem...`);
-    try {
-      const result = await redeemPolymarketPositions({
-        // Use the Proxy Address from env
-        safeAddress: process.env.PROXY_ADDRESS || '', 
-        traderPrivateKey: privateKey,
-        chainId: parseInt(process.env.CHAIN_ID || '137'),
-        rpcUrl: process.env.RPC_URL || 'https://polygon.drpc.org',
-        collateralToken: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174', // USDC
-        conditionalTokensAddress: '0x4d97dcd97ec945f40cf65f87097ace5ea0476045', // Standard on Polygon
-        builderConfig: {
-          apiKey: apiKey,
-          secret: secret,
-          passphrase: passphrase,
-        },
-        relayerTxType: walletType,
-        onProgress: (msg, data) => console.log(`[LOG] ${msg}`, data ? JSON.stringify(data) : '')
-      });
+    console.log(`\n\n${'═'.repeat(60)}`);
+    console.log(`🕒 [${new Date().toLocaleString()}] Starting redemption cycle...`);
+    console.log('═'.repeat(60));
 
-      console.log('\n✅ Cycle Finished!');
-      console.log('Summary:', {
-        Success: result.redeemed,
-        Failed: result.failed,
-        Total: result.totalPositions
-      });
-
-      if (result.errors && result.errors.length > 0) {
-        console.log('\n⚠️ Errors encountered:');
-        result.errors.forEach(e => console.error(`- ${e}`));
+    for (const account of accounts) {
+      try {
+        await processAccount(account);
+      } catch (error) {
+        console.error(`\n[${account.name}] ❌ Fatal error:`, error);
       }
-      
-    } catch (error) {
-      console.error('\n❌ Fatal Error during cycle:', error);
     }
+
+    console.log(`\n${'─'.repeat(60)}`);
+    console.log(`✅ Cycle complete for all ${accounts.length} account(s)`);
   };
 
-  // Run the first check immediately
+  // Run immediately
   await runCycle();
 
-  // Set up the 15-minute interval loop
-  const TWENTY_FIVE_MINUTES_MS = 25 * 60 * 1000;
-  console.log(`\n⏳ Next check scheduled in 25 minutes... (Keep this window open)`);
-  
+  // Schedule recurring checks every 25 minutes
+  const INTERVAL_MS = 25 * 60 * 1000;
+  console.log(`\n⏳ Next cycle in 25 minutes... (Keep this window open)`);
+
   setInterval(async () => {
     await runCycle();
-    console.log(`\n⏳ Next check scheduled in 25 minutes... (Keep this window open)`);
-  }, TWENTY_FIVE_MINUTES_MS);
+    console.log(`\n⏳ Next cycle in 25 minutes... (Keep this window open)`);
+  }, INTERVAL_MS);
 }
 
 main();

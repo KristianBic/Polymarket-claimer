@@ -54,6 +54,18 @@ export interface BuilderCredentials {
   passphrase: string;
 }
 
+export interface RelayerApiKeyCredentials {
+  relayerApiKey: string;
+  relayerApiKeyAddress: string;
+}
+
+/**
+ * Type guard to check if auth config uses Relayer API Keys
+ */
+function isRelayerApiKeyCredentials(config: any): config is RelayerApiKeyCredentials {
+  return config && typeof config.relayerApiKey === 'string' && typeof config.relayerApiKeyAddress === 'string';
+}
+
 export interface RedeemOptions {
   /** Safe wallet address that holds the positions */
   safeAddress: string;
@@ -71,11 +83,10 @@ export interface RedeemOptions {
   rpcUrl?: string;
   /** Polymarket Data API URL */
   dataApiUrl?: string;
-  /** Builder program credentials */
-  builderConfig: BuilderCredentials | { signingUrl: string };
+  /** Authentication config: Builder API Keys, Relayer API Keys, or remote signing URL */
+  authConfig: BuilderCredentials | RelayerApiKeyCredentials | { signingUrl: string };
   /** Delay between transactions in milliseconds (default: 2000) */
   delayBetweenTransactions?: number;
-  /** Optional callback for progress updates */
   /** Optional callback for progress updates */
   onProgress?: (message: string, data?: any) => void;
   /** Wallet type: SAFE or PROXY (defaults to SAFE) */
@@ -208,7 +219,7 @@ function createRelayClient(
   chainId: number,
   rpcUrl: string,
   relayerUrl: string,
-  builderConfig: BuilderCredentials | { signingUrl: string },
+  authConfig: BuilderCredentials | RelayerApiKeyCredentials | { signingUrl: string },
   relayerTxType?: RelayerTxType,
 ) {
   const networkName =
@@ -221,24 +232,46 @@ function createRelayClient(
   const provider = new ethers.providers.StaticJsonRpcProvider(rpcUrl, networkConfig);
   const signer = new ethers.Wallet(privateKey, provider);
 
-  let config: BuilderConfig;
-  if ("signingUrl" in builderConfig) {
-    config = new BuilderConfig({
+  let builderConfig: BuilderConfig | undefined;
+
+  if (isRelayerApiKeyCredentials(authConfig)) {
+    // Relayer API Key auth — no BuilderConfig needed.
+    // The SDK's RelayClient will fall through to unauthenticated requests,
+    // and we'll inject the relayer headers via HTTP client patching below.
+    builderConfig = undefined;
+  } else if ("signingUrl" in authConfig) {
+    builderConfig = new BuilderConfig({
       remoteBuilderConfig: {
-        url: builderConfig.signingUrl,
+        url: authConfig.signingUrl,
       },
     });
   } else {
-    config = new BuilderConfig({
+    builderConfig = new BuilderConfig({
       localBuilderCreds: {
-        key: builderConfig.apiKey,
-        secret: builderConfig.secret,
-        passphrase: builderConfig.passphrase,
+        key: authConfig.apiKey,
+        secret: authConfig.secret,
+        passphrase: authConfig.passphrase,
       },
     });
   }
 
-  const client = new RelayClient(relayerUrl, chainId, signer, config, relayerTxType);
+  const client = new RelayClient(relayerUrl, chainId, signer, builderConfig, relayerTxType);
+
+  // For Relayer API Key auth: patch the SDK's internal HTTP client
+  // to inject RELAYER_API_KEY and RELAYER_API_KEY_ADDRESS headers on every request.
+  // This lets us reuse all of the SDK's transaction signing, encoding, and polling logic.
+  if (isRelayerApiKeyCredentials(authConfig)) {
+    const httpClient = (client as any).httpClient;
+    const originalSend = httpClient.send.bind(httpClient);
+    httpClient.send = async (endpoint: string, method: string, options?: any) => {
+      if (!options) options = {};
+      if (!options.headers) options.headers = {};
+      options.headers['RELAYER_API_KEY'] = authConfig.relayerApiKey;
+      options.headers['RELAYER_API_KEY_ADDRESS'] = authConfig.relayerApiKeyAddress;
+      return originalSend(endpoint, method, options);
+    };
+  }
+
   return client;
 }
 
@@ -257,7 +290,7 @@ export async function redeemPolymarketPositions(
     relayerUrl = "https://relayer-v2.polymarket.com",
     rpcUrl = "https://polygon.drpc.org",
     dataApiUrl = "https://data-api.polymarket.com",
-    builderConfig,
+    authConfig,
     delayBetweenTransactions = 2000,
     onProgress,
     relayerTxType,
@@ -323,7 +356,7 @@ export async function redeemPolymarketPositions(
     chainId,
     rpcUrl,
     relayerUrl,
-    builderConfig,
+    authConfig,
     relayerTxType,
   );
 

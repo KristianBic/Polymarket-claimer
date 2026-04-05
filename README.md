@@ -8,43 +8,44 @@ This utility script securely redeems winning positions on Polymarket using the o
 - **Polymarket Account** with API Keys
 - WINNING positions to redeem (Wait for market resolution!)
 
-## Installation
+## 🚀 Setup
 
-1.  **Install dependencies:**
-    ```bash
-    npm install
-    ```
+1. **Install Dependencies:**
+   ```bash
+   npm install
+   ```
 
-## Configuration
+2. **Configure Your Accounts:**
+   The claimer supports multiple accounts. You must create an `.env.account1` file (and others) based on the provided example.
+   
+   First, make a copy of the example:
+   ```bash
+   cp .env.account.example .env.account1
+   ```
+   
+   Next, edit `.env.account1` with your credentials. You can choose to authenticate your account with either:
+   1. **Builder API Keys** (default, from [Builder Profile](https://polymarket.com/settings))
+   2. **Relayer API Keys** (from [API Keys Settings](https://polymarket.com/settings?tab=api-keys))
 
-1.  **Create your configuration file:**
-    Copy `.env.example` to `.env`:
-    ```bash
-    cp .env.example .env
-    # or on Windows
-    copy .env.example .env
-    ```
+   You can create as many account files as you'd like (e.g., `.env.account2`, `.env.account-main`, etc.). The script will automatically process any `.env.account*` files.
 
-2.  **Edit `.env` and fill in your details:**
+3. **Configure Shared Settings (Optional):**
+   You can optionally set an `RPC_URL` in the main `.env` file that applies to all accounts.
 
-    *   `PRIVATE_KEY`: Your wallet's private key (Export from Metamask or Reveal from MagicLink).
-    *   `API_KEY`, `API_SECRET`, `API_PASSPHRASE`: Go to [polymarket.com/profile](https://polymarket.com/profile) -> Settings -> API Keys to generate these.
-    *   `PROXY_ADDRESS`: Go to your Profile page and copy the address shown (usually starts with `0x...`). This is your "Proxy" or "SCA" address where funds are held.
+## ⚙️ Running the Script
 
-3.  **Set your Wallet Type (`WALLET_TYPE`):**
-
-    *   **Browser Wallet (Metamask/Coinbase):** Set `WALLET_TYPE=SAFE`
-    *   **Email Sign-In (Google/MagicLink):** Set `WALLET_TYPE=PROXY`
-
-    > **Important:** If you set this incorrectly, the script will run but find "0 redeemable positions" or fail execution.
-
-## Usage
-
-Run the redemption script:
+You can start the continuous background runner using `ts-node`:
 
 ```bash
 npx ts-node run.ts
 ```
+
+**What it does:**
+1. Dynamically loads all your `.env.account*` files
+2. Authenticates each account sequentially using their specified `AUTH_METHOD`
+3. Automatically fetches and redeems all redeemable positions using Polymarket's Relayer for gasless transactions
+4. Waits 25 minutes
+5. Loops infinitely
 
 ## Troubleshooting
 
